@@ -43,6 +43,90 @@ def create_app():
         x, y, z = map(int, coords.split("_"))
         return jsonify([x, y, z])
 
+    @app.get("/dissociate/terms/<term_a>/<term_b>", endpoint="dissociate_terms")
+    def dissociate_by_terms(term_a, term_b):
+        """
+        Returns studies that mention term_a but NOT term_b.
+        """
+        try:
+            eng = get_engine()
+            with eng.begin() as conn:
+                conn.execute(text("SET search_path TO ns, public;"))
+
+                query = text("""
+                    SELECT DISTINCT study_id
+                    FROM ns.annotations_terms
+                    WHERE term = :term_a
+                      AND study_id NOT IN (
+                          SELECT study_id
+                          FROM ns.annotations_terms
+                          WHERE term = :term_b
+                      )
+                    ORDER BY study_id;
+                """)
+
+                result = conn.execute(query, {"term_a": term_a, "term_b": term_b})
+                studies = [row[0] for row in result]
+
+                return jsonify({
+                    "term_a": term_a,
+                    "term_b": term_b,
+                    "description": f"Studies mentioning '{term_a}' but not '{term_b}'",
+                    "count": len(studies),
+                    "studies": studies
+                }), 200
+
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.get("/dissociate/locations/<loc_a>/<loc_b>", endpoint="dissociate_locations")
+    def dissociate_by_locations(loc_a, loc_b):
+        """
+        Returns studies that mention location loc_a (x_y_z) but NOT location loc_b.
+        """
+        try:
+            x1, y1, z1 = map(float, loc_a.split("_"))
+            x2, y2, z2 = map(float, loc_b.split("_"))
+
+            eng = get_engine()
+            with eng.begin() as conn:
+                conn.execute(text("SET search_path TO ns, public;"))
+
+                query = text("""
+                    SELECT DISTINCT study_id
+                    FROM ns.coordinates
+                    WHERE ST_X(geom) = :x1
+                      AND ST_Y(geom) = :y1
+                      AND ST_Z(geom) = :z1
+                      AND study_id NOT IN (
+                          SELECT study_id
+                          FROM ns.coordinates
+                          WHERE ST_X(geom) = :x2
+                            AND ST_Y(geom) = :y2
+                            AND ST_Z(geom) = :z2
+                      )
+                    ORDER BY study_id;
+                """)
+
+                result = conn.execute(query, {
+                    "x1": x1, "y1": y1, "z1": z1,
+                    "x2": x2, "y2": y2, "z2": z2
+                })
+                studies = [row[0] for row in result]
+
+                return jsonify({
+                    "location_a": f"{x1}_{y1}_{z1}",
+                    "location_b": f"{x2}_{y2}_{z2}",
+                    "description": f"Studies with coordinate [{x1}, {y1}, {z1}] but not [{x2}, {y2}, {z2}]",
+                    "count": len(studies),
+                    "studies": studies
+                }), 200
+
+        except ValueError as ve:
+            return jsonify({"error": f"Invalid coordinate format: {str(ve)}"}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     @app.get("/test_db", endpoint="test_db")
     
     def test_db():
